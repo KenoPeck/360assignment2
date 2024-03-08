@@ -188,18 +188,451 @@ void printSummaryData(_process process_list[])
     printf("\tAverage waiting time: %6f\n", avg_waiting_time);
 } // End of the print summary data function
 
+#define COMMANDLINE_INPUT_LENGTH 128
+uint32_t QUANTUM = 2;
+int debug = 1;
 
 /**
  * The magic starts from here
  */
 int main(int argc, char *argv[])
 {
-    uint32_t total_num_of_process;               // Read from the file -- number of process to create
-    _process process_list[total_num_of_process]; // Creates a container for all processes
+    uint32_t total_num_of_process; // Read from the file -- number of process to create
     // Other variables
-
+    int A, B, C, M;
 
     // Write code for your shiny scheduler
+    if(debug){
+        printf("argc = %i, argv[0] = %s\n", argc, argv[0]);
+        printf("argc = %i, argv[1] = %s\n", argc, argv[1]);
+    }
+    
+    if(argc > 1)
+    {
+        FILE* fp = fopen(argv[1], "r");
+        if (fp == NULL){
+            printf("%s not found\n", argv[1]);
+            return -1;
+        }
+        FILE* randomFile = fopen(RANDOM_NUMBER_FILE_NAME, "r");
+        if (randomFile == NULL){
+            printf("%s not found\n", RANDOM_NUMBER_FILE_NAME);
+            return -1;
+        }
+        char fileInput[COMMANDLINE_INPUT_LENGTH];
+        fscanf(fp, "%u", &total_num_of_process);
+        _process process_list[total_num_of_process]; // Creates a container for all processes
+        _process finished_processes[total_num_of_process];
+        for (int i = 0; i < total_num_of_process; i++){
+            fscanf(fp, " (%i %i %i %i) ", &A, &B, &C, &M);
+            if(debug){
+                printf("A: %i, B: %i, C: %i, M: %i\n",A,B,C,M);
+            }
+            process_list[i].A = A;
+            process_list[i].B = B;
+            process_list[i].C = C;
+            process_list[i].M = M;
+            process_list[i].processID = i;
+            TOTAL_CREATED_PROCESSES += 1;
+        }
+        fclose(fp);
 
+        // FCFS---------------------------------------------------------------------------------
+
+        TOTAL_STARTED_PROCESSES = TOTAL_FINISHED_PROCESSES = TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = CURRENT_CYCLE =  0;
+        initialize_processes(process_list);
+        printf("\n######################### START OF FIRST COME FIRST SERVE #########################\n");
+        
+        FCFS(process_list, finished_processes, randomFile);
+        printStart(process_list);
+        printFinal(finished_processes);
+        printf("\nThe scheduling algorithm used was First Come First Serve\n");
+        printProcessSpecifics(process_list);
+        printSummaryData(process_list);
+        printf("######################### END OF FIRST COME FIRST SERVE #########################");
+
+        // RR ---------------------------------------------------------------------------------
+
+        TOTAL_STARTED_PROCESSES = TOTAL_FINISHED_PROCESSES = TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = CURRENT_CYCLE =  0;
+        initialize_processes(process_list);
+        printf("\n######################### START OF ROUND ROBIN #########################\n");
+        
+        RR(process_list, finished_processes, randomFile);
+        printStart(process_list);
+        printFinal(finished_processes);
+        printf("\nThe scheduling algorithm used was Round Robin\n");
+        printProcessSpecifics(process_list);
+        printSummaryData(process_list);
+        printf("######################### END OF ROUND ROBIN #########################");
+
+        //SJF ---------------------------------------------------------------------------------
+
+        TOTAL_STARTED_PROCESSES = TOTAL_FINISHED_PROCESSES = TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED = CURRENT_CYCLE =  0;
+        initialize_processes(process_list);
+        printf("\n######################### START OF SHORTEST JOB FIRST #########################\n");
+        
+        SJF(process_list, finished_processes, randomFile);
+        printStart(process_list);
+        printFinal(finished_processes);
+        printf("\nThe scheduling algorithm used was Shortest Job First\n");
+        printProcessSpecifics(process_list);
+        printSummaryData(process_list);
+        printf("######################### END OF SHORTEST JOB FIRST #########################\n");
+
+        fclose(randomFile);
+    }
     return 0;
-} 
+}
+
+void initialize_processes(_process process_list[]){
+    for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++){
+        process_list[i].status = 0;
+        process_list[i].finishingTime = -1;
+        process_list[i].currentCPUTimeRun = 0;
+        process_list[i].currentIOBlockedTime = 0;
+        process_list[i].currentWaitingTime = 0;
+        process_list[i].IOBurst = 0;
+        process_list[i].CPUBurst = 0;
+        process_list[i].quantum = 2;
+        process_list[i].isFirstTimeRunning = true;
+        process_list[i].nextInBlockedList = NULL;
+        process_list[i].nextInReadyQueue = NULL;
+        process_list[i].nextInReadySuspendedQueue = NULL;
+    }
+}
+
+void start_process(_process *process, FILE *randomFile){
+    if ((*process).isFirstTimeRunning){
+        (*process).isFirstTimeRunning = false;
+        TOTAL_STARTED_PROCESSES++;
+    }
+    (*process).status = 2;
+    (*process).nextInReadyQueue = (*process).nextInBlockedList = NULL;
+    uint32_t time, burst_time;
+    if (!(*process).CPUBurst){
+        burst_time = randomOS((*process).B, (*process).processID, randomFile);
+        time = (*process).C - (*process).currentCPUTimeRun;
+        if (time < burst_time){
+            (*process).CPUBurst = time;
+        }
+        else{
+            (*process).CPUBurst = burst_time;
+            (*process).IOBurst = burst_time * (*process).M;
+        }
+    }
+}
+
+void process_finished(_process* process, _process finished_processes[]){
+    _process* finished = &finished_processes[TOTAL_FINISHED_PROCESSES];
+    (*finished).A = (*process).A;
+    (*finished).B = (*process).B;
+    (*finished).C = (*process).C;
+    (*finished).M = (*process).M;
+    (*finished).processID = (*process).processID;
+    (*finished).finishingTime = (*process).finishingTime;
+    (*finished).currentCPUTimeRun = (*process).currentCPUTimeRun;
+    (*finished).currentIOBlockedTime = (*process).currentIOBlockedTime;
+    (*finished).currentWaitingTime = (*process).currentWaitingTime;
+    TOTAL_FINISHED_PROCESSES += 1;
+}
+
+void block(_process* newBlocked, _process**  oldBlocked){
+    (*newBlocked).status = 3;
+    if (!(*oldBlocked)){
+        *oldBlocked = newBlocked;
+        return;
+    }
+    else if ((**oldBlocked).IOBurst > (*newBlocked).IOBurst){
+        (*newBlocked).nextInBlockedList = *oldBlocked;
+        *oldBlocked = newBlocked;
+        return;
+    }
+    _process* current = *oldBlocked;
+    while ((*current).nextInBlockedList){
+        if ((*current).nextInBlockedList->IOBurst > (*newBlocked).IOBurst){
+            (*newBlocked).nextInBlockedList = (*current).nextInBlockedList;
+            (*current).nextInBlockedList = newBlocked;
+            return;
+        }
+        else{
+            current = (*current).nextInBlockedList;
+        }
+    }
+    (*current).nextInBlockedList = newBlocked;
+}
+
+void FCFS(_process processes[], _process finished_processes[], FILE* randomFile){
+    _process* active = NULL, *current = NULL, *ready = NULL, *blocked = NULL;
+    while (TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES){
+        if (blocked){
+            current = blocked;
+            TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED += 1;
+            while (current){
+                (*current).currentIOBlockedTime += 1;
+                (*current).IOBurst -= 1;
+                if ((*current).IOBurst > 0){
+                    current = (*current).nextInBlockedList;
+                }
+                else{
+                    blocked = (*blocked).nextInBlockedList;
+                    FCFS_ready(current, &ready);
+                    current = blocked;
+                }
+            }
+        }
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++){
+            if (processes[i].A == CURRENT_CYCLE){
+                FCFS_ready(&processes[i], &ready);
+            }
+        }
+        if(active){
+            (*active).CPUBurst -= 1;
+            (*active).currentCPUTimeRun += 1;
+            if ((*active).currentCPUTimeRun == (*active).C){
+                (*active).finishingTime = CURRENT_CYCLE;
+                (*active).status = 4;
+                process_finished(active, finished_processes);
+                active = NULL;
+            }
+            else if ((*active).CPUBurst == 0){
+                block(active, &blocked);
+                active = NULL;
+            }
+        }
+        if (ready && !active){
+            active = ready;
+            ready = (*ready).nextInReadyQueue;
+            start_process(active, randomFile);
+        }
+        current = ready;
+        while (current){
+            (*current).currentWaitingTime += 1;
+            current = (*current).nextInReadyQueue;
+        }
+        CURRENT_CYCLE += 1;
+    }
+}
+
+void FCFS_ready(_process* newReady, _process** oldReady){
+    (*newReady).status = 1;
+    if (!(*oldReady)){
+        *oldReady = newReady;
+        return;
+    }
+    else{
+        _process* current = *oldReady;
+        while ((*current).nextInReadyQueue){
+            current = (*current).nextInReadyQueue;
+        }
+        (*current).nextInReadyQueue = newReady;
+    }
+}
+
+void RR(_process processes[], _process finished_processes[], FILE* randomFile){
+    _process* active = NULL, *current = NULL, *ready = NULL, *blocked = NULL, *temp = NULL;
+    while (TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES){
+        if (blocked){
+            TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED += 1;
+            current = blocked;
+            while (current){
+                (*current).currentIOBlockedTime += 1;
+                (*current).IOBurst -= 1;
+                if ((*current).IOBurst > 0){
+                    current = (*current).nextInBlockedList;
+                }
+                else{
+                    if (ready){
+                        temp = ready;
+                        while((*temp).nextInReadyQueue){
+                            temp = (*temp).nextInReadyQueue;
+                        }
+                        (*temp).nextInReadyQueue = current;
+                    }
+                    else{
+                        ready = current;
+                    }
+                    blocked = (*blocked).nextInBlockedList;
+                    current = blocked;
+                }
+            }
+        }
+        if (TOTAL_STARTED_PROCESSES < TOTAL_CREATED_PROCESSES){
+            for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++){
+                if (processes[i].A == CURRENT_CYCLE){
+                    RR_ready(&processes[i], &ready);
+                }
+            }
+        }
+        if(active){
+            (*active).CPUBurst -= 1;
+            (*active).quantum -= 1;
+            (*active).currentCPUTimeRun += 1;
+            if ((*active).currentCPUTimeRun == (*active).C){
+                (*active).finishingTime = CURRENT_CYCLE;
+                (*active).status = 4;
+                process_finished(active, finished_processes);
+                active = NULL;
+            }
+            else if ((*active).CPUBurst == 0){
+                (*active).quantum = 2;
+                block(active, &blocked);
+                active = NULL;
+            }
+            else if ((*active).quantum == 0){
+                if(ready){
+                    current = ready;
+                    while((*current).nextInReadyQueue){
+                        current = (*current).nextInReadyQueue;
+                    }
+                    (*current).nextInReadyQueue = active;
+                    (*active).quantum = 2;
+                    (*active).status = 1;
+                    active = NULL;
+                }
+            }
+        }
+        if (ready && !active){
+            active = ready;
+            ready = (*ready).nextInReadyQueue;
+            start_process(active, randomFile);
+        }
+        current = ready;
+        while (current){
+            (*current).currentWaitingTime += 1;
+            current = (*current).nextInReadyQueue;
+        }
+        CURRENT_CYCLE += 1;
+    }
+}
+
+void RR_ready(_process *newReady, _process **oldReady){
+    (*newReady).status = 1;
+    if (!(*oldReady)) {
+        *oldReady = newReady;
+        return;
+    }
+    else if ((**oldReady).A > (*newReady).A) {
+        (*newReady).nextInReadyQueue = *oldReady;
+        *oldReady = newReady;
+        return;
+    }
+    else if ((((**oldReady).processID) > (*newReady).processID) && ((*newReady).A == (**oldReady).A)){
+        (*newReady).nextInReadyQueue = *oldReady;
+        *oldReady = newReady;
+        return;
+    }
+    else{
+        _process *current = *oldReady;
+        while ((*current).nextInReadyQueue) {
+            if ((*current).nextInReadyQueue->A > (*newReady).A) {
+                (*newReady).nextInReadyQueue = (*current).nextInReadyQueue;
+                (*current).nextInReadyQueue = newReady;
+                return;
+            }
+            else if ((((*current).nextInReadyQueue->processID > (*newReady).processID) && ((*newReady).A == (*current).nextInReadyQueue->A))){
+                (*newReady).nextInReadyQueue = (*current).nextInReadyQueue;
+                (*current).nextInReadyQueue = newReady;
+                return;
+            }
+            current = (*current).nextInReadyQueue;
+        }
+        (*current).nextInReadyQueue = newReady;
+    }
+}
+
+void SJF(_process processes[], _process finished_processes[], FILE* randomFile){
+    _process* active = NULL, *current = NULL, *ready = NULL, *blocked = NULL;
+    while (TOTAL_FINISHED_PROCESSES < TOTAL_CREATED_PROCESSES){
+        if (blocked){
+            current = blocked;
+            TOTAL_NUMBER_OF_CYCLES_SPENT_BLOCKED += 1;
+            while (current){
+                (*current).currentIOBlockedTime += 1;
+                (*current).IOBurst -= 1;
+                if ((*current).IOBurst > 0){
+                    current = (*current).nextInBlockedList;
+                }
+                else{
+                    blocked = (*blocked).nextInBlockedList;
+                    SJF_ready(current, &ready);
+                    current = blocked;
+                }
+            }
+        }
+        for (int i = 0; i < TOTAL_CREATED_PROCESSES; i++){
+            if (processes[i].A == CURRENT_CYCLE){
+                SJF_ready(&processes[i], &ready);
+            }
+        }
+        if(active){
+            (*active).CPUBurst -= 1;
+            (*active).currentCPUTimeRun += 1;
+            if ((*active).currentCPUTimeRun == (*active).C){
+                (*active).finishingTime = CURRENT_CYCLE;
+                (*active).status = 4;
+                process_finished(active, finished_processes);
+                active = NULL;
+            }
+            else if ((*active).CPUBurst == 0){
+                block(active, &blocked);
+                active = NULL;
+            }
+        }
+        if (ready && !active){
+            active = ready;
+            ready = (*ready).nextInReadyQueue;
+            start_process(active, randomFile);
+        }
+        current = ready;
+        while (current){
+            (*current).currentWaitingTime += 1;
+            current = (*current).nextInReadyQueue;
+        }
+        CURRENT_CYCLE += 1;
+    }
+}
+
+void SJF_ready(_process *newReady, _process **oldReady){
+    (*newReady).status = 1;
+    if (!(*oldReady)) {
+        *oldReady = newReady;
+        return;
+    }
+    else if(((**oldReady).C - (**oldReady).currentCPUTimeRun) > ((*newReady).C - (*newReady).currentCPUTimeRun)){
+        (*newReady).nextInReadyQueue = *oldReady;
+        *oldReady = newReady;
+        return;
+    }
+    else if (((**oldReady).A > (*newReady).A) && (((**oldReady).C - (**oldReady).currentCPUTimeRun) == ((*newReady).C - (*newReady).currentCPUTimeRun))) {
+        (*newReady).nextInReadyQueue = *oldReady;
+        *oldReady = newReady;
+        return;
+    }
+    else if ((((**oldReady).processID) > (*newReady).processID) && ((*newReady).A == (**oldReady).A) && (((**oldReady).C - (**oldReady).currentCPUTimeRun) == ((*newReady).C - (*newReady).currentCPUTimeRun))){
+        (*newReady).nextInReadyQueue = *oldReady;
+        *oldReady = newReady;
+        return;
+    }
+    else{
+        _process *current = *oldReady;
+        while ((*current).nextInReadyQueue) {
+            if (((*current).C - (*current).currentCPUTimeRun) > ((*newReady).C - (*newReady).currentCPUTimeRun)) {
+                (*newReady).nextInReadyQueue = (*current).nextInReadyQueue;
+                (*current).nextInReadyQueue = newReady;
+                return;
+            }
+            else if (((*current).A > (*newReady).A) && (((*current).C - (*current).currentCPUTimeRun) == ((*newReady).C - (*newReady).currentCPUTimeRun))){
+                (*newReady).nextInReadyQueue = (*current).nextInReadyQueue;
+                (*current).nextInReadyQueue = newReady;
+                return;
+            }
+            else if ((((*current).processID) > (*newReady).processID) && ((*newReady).A == (*current).A) && (((*current).C - (*current).currentCPUTimeRun) == ((*newReady).C - (*newReady).currentCPUTimeRun))){
+                (*newReady).nextInReadyQueue = (*current).nextInReadyQueue;
+                (*current).nextInReadyQueue = newReady;
+                return;
+            }
+            current = (*current).nextInReadyQueue;
+        }
+        (*current).nextInReadyQueue = newReady;
+    }
+}
