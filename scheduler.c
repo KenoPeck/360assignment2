@@ -190,7 +190,7 @@ void printSummaryData(_process process_list[])
 
 #define COMMANDLINE_INPUT_LENGTH 128
 uint32_t QUANTUM = 2;
-int debug = 1;
+int debug = 0;
 
 /**
  * The magic starts from here
